@@ -433,6 +433,66 @@ submitted, so they retain uploads even when validation fails:
 <%= form.file_field :profile_photo, direct_upload: true %>
 ```
 
+### Attachment Callbacks
+
+To run code when a file is attached to or removed from a record, pass callbacks
+to `has_one_attached` or `has_many_attached`:
+
+```ruby
+class User < ApplicationRecord
+  has_one_attached :avatar, after_attach: :share_avatar, after_detach: :expire_avatar_cache
+
+  private
+    def share_avatar(attachment)
+      AvatarSharingJob.perform_later(self, attachment.blob)
+    end
+
+    def expire_avatar_cache(attachment)
+      Rails.cache.delete([ self, :avatar ])
+    end
+end
+```
+
+The available callbacks are:
+
+* `before_attach` runs before the `ActiveStorage::Attachment` record is created.
+* `after_attach` runs once the attachment has been committed and its file has
+  been uploaded to the storage service.
+* `before_detach` runs before the attachment record is removed.
+* `after_detach` runs once the removal has been committed.
+
+Each callback can be a method name, a proc, an object that responds to the
+callback's name, or an array of them, as with [association
+callbacks](active_record_callbacks.html#association-callbacks). Methods are called
+with the attachment, while procs and objects are called with the record and the
+attachment:
+
+```ruby
+class Gallery < ApplicationRecord
+  has_many_attached :photos,
+    after_attach: ->(gallery, photo) { gallery.touch(:last_photo_added_at) },
+    before_detach: PhotoArchiver
+end
+```
+
+For `has_many_attached`, callbacks run once for each file.
+
+Detach callbacks run however an attachment is removed: when it is replaced,
+assigned `nil`, purged with `purge` or `purge_later`, removed with `detach`, or
+destroyed along with its record. As with other Active Record callbacks, they
+don't run when attachment records are deleted directly, such as with
+`ActiveStorage::Attachment.where(...).delete_all`. By the time `after_detach`
+runs, the blob may already have been purged, so use `before_detach` for work
+that needs the file.
+
+Raising an exception in a before callback stops the file from being attached or
+removed. The after callbacks run only if the change is committed.
+
+TIP: A model's own `after_commit` callbacks can run before a newly attached file
+has been uploaded, depending on where they are declared. Use `after_attach` for
+work that needs the file to be in storage, such as downloading it or sharing its
+URL.
+
 Querying Attached Files
 -----------------------
 

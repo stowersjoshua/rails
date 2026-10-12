@@ -10,6 +10,15 @@ module ActiveStorage
       def named_variants
         @named_variants ||= {}
       end
+
+      # Returns the callbacks declared for +callback_name+, such as +:after_attach+.
+      def callbacks_for(callback_name)
+        Array(options[callback_name])
+      end
+
+      def detach_callbacks?
+        callbacks_for(:before_detach).any? || callbacks_for(:after_detach).any?
+      end
     end
 
     # Holds all the metadata about a has_one_attached attachment as it was

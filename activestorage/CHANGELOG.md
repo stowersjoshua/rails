@@ -1,3 +1,18 @@
+*   Add `before_attach`, `after_attach`, `before_detach` and `after_detach` callbacks to `has_one_attached` and `has_many_attached`.
+
+    ```ruby
+    class User < ApplicationRecord
+      has_one_attached :avatar, after_attach: :share_avatar, before_detach: :expire_avatar_cache
+    end
+    ```
+
+    `after_attach` runs once the attachment is committed and its file is uploaded. Detach
+    callbacks run however the attachment is removed, including by `purge`, `purge_later`
+    and `detach`, which delete the attachment without running its destroy callbacks.
+    Callbacks take a method name, a proc, an object or an array, like association callbacks.
+
+    *Joshua Stowers*
+
 *   Forward other options from `has_one_attached` and `has_many_attached` to the attachment association.
 
     ```ruby

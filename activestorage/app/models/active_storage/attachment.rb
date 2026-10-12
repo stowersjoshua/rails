@@ -23,6 +23,7 @@ class ActiveStorage::Attachment < ActiveStorage::Record
   after_upload :mirror_blob_later
   after_upload :analyze_blob_later
   after_upload :create_variants
+  after_upload :run_after_attach_callbacks
 
   # Set to true when immediate variants have been processed from local io,
   # so create_variants knows to skip them.
@@ -47,8 +48,11 @@ class ActiveStorage::Attachment < ActiveStorage::Record
   delegate_missing_to :blob
   delegate :signed_id, to: :blob
 
+  before_create :run_before_attach_callbacks
   after_create_commit :run_upload_callbacks, unless: :pending_upload
-  after_destroy_commit :purge_dependent_blob
+
+  before_destroy :run_before_detach_callbacks
+  after_destroy_commit :purge_dependent_blob_and_run_after_detach_callbacks
 
   ##
   # :singleton-method:
@@ -88,20 +92,36 @@ class ActiveStorage::Attachment < ActiveStorage::Record
 
   # Synchronously deletes the attachment and {purges the blob}[rdoc-ref:ActiveStorage::Blob#purge].
   def purge
-    transaction do
-      delete
-      record.touch if record&.persisted?
-    end
-    blob&.purge
+    delete_with_detach_callbacks(touch_record: true) { blob&.purge }
   end
 
   # Deletes the attachment and {enqueues a background job}[rdoc-ref:ActiveStorage::Blob#purge_later] to purge the blob.
   def purge_later
-    transaction do
+    delete_with_detach_callbacks(touch_record: true) { blob&.purge_later }
+  end
+
+  # Deletes the attachment without running its destroy callbacks, as +purge+,
+  # +purge_later+ and +detach+ do, but with the record's detach callbacks:
+  # +before_detach+ runs in the same transaction as the deletion, and
+  # +after_detach+ once it is committed, after the given block.
+  def delete_with_detach_callbacks(touch_record: false) # :nodoc:
+    detach_callbacks = persisted? && detach_callbacks?
+
+    if detach_callbacks || touch_record
+      transaction do
+        run_before_detach_callbacks if detach_callbacks
+        delete
+        record.touch if touch_record && record&.persisted?
+      end
+    else
       delete
-      record.touch if record&.persisted?
     end
-    blob&.purge_later
+
+    # A before_detach callback can roll the transaction back without raising.
+    return unless destroyed?
+
+    yield if block_given?
+    self.class.current_transaction.after_commit { run_after_detach_callbacks } if detach_callbacks
   end
 
   # Returns an ActiveStorage::Variant or ActiveStorage::VariantWithRecord
@@ -162,6 +182,54 @@ class ActiveStorage::Attachment < ActiveStorage::Record
   end
 
   private
+    def run_before_attach_callbacks
+      run_record_callbacks(:before_attach)
+    end
+
+    def run_after_attach_callbacks
+      run_record_callbacks(:after_attach)
+    end
+
+    def run_before_detach_callbacks
+      run_record_callbacks(:before_detach)
+    end
+
+    def run_after_detach_callbacks
+      run_record_callbacks(:after_detach)
+    end
+
+    # Runs the attach and detach callbacks the record declared for this
+    # attachment, the same way association callbacks are run.
+    def run_record_callbacks(callback_name)
+      callbacks = record_reflection&.callbacks_for(callback_name) || []
+
+      callbacks.each do |callback|
+        case callback
+        when Symbol
+          record.send(callback, self)
+        when Proc
+          callback.call(record, self)
+        else
+          callback.send(callback_name, record, self)
+        end
+      end
+    end
+
+    def detach_callbacks?
+      record_reflection&.detach_callbacks?
+    end
+
+    def record_reflection
+      record.attachment_reflections[name] if record
+    end
+
+    # Purges the blob before running the after_detach callbacks, so that one
+    # raising an exception can't leave the blob behind.
+    def purge_dependent_blob_and_run_after_detach_callbacks
+      purge_dependent_blob
+      run_after_detach_callbacks
+    end
+
     def run_upload_callbacks
       run_callbacks(:upload)
     end

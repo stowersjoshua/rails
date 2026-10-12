@@ -10,7 +10,7 @@ module ActiveStorage
 
     def detach
       if attachment.present?
-        attachment.delete
+        attachment.delete_with_detach_callbacks
         reset
       end
     end

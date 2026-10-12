@@ -114,13 +114,43 @@ module ActiveStorage
       #
       # The default can be changed globally with <tt>config.active_storage.analyze = :immediately</tt>.
       #
+      # Pass callbacks to run when a file is attached to or detached from +avatar+:
+      #
+      #   class User < ApplicationRecord
+      #     has_one_attached :avatar, after_attach: :share_avatar, before_detach: :expire_avatar_cache
+      #
+      #     private
+      #       def share_avatar(attachment)
+      #         # ...
+      #       end
+      #   end
+      #
+      # Valid callbacks are:
+      # - +:before_attach+ - Runs before the attachment record is created
+      # - +:after_attach+ - Runs once the attachment is committed and its file uploaded
+      # - +:before_detach+ - Runs before the attachment record is removed
+      # - +:after_detach+ - Runs once the removal is committed
+      #
+      # Each takes a method name, a proc, an object responding to the callback's
+      # name, or an array of them, like association callbacks. A method is called
+      # with the ActiveStorage::Attachment, while a proc or an object is called
+      # with the record and the attachment.
+      #
+      # Detach callbacks run however the attachment is removed: when it is
+      # replaced, assigned +nil+, purged, detached, or destroyed with the record.
+      # By the time +after_detach+ runs, the blob may already have been purged.
+      #
+      # Raising an exception in a before callback stops the file from being
+      # attached or removed. After callbacks don't run if the change is rolled back.
+      #
       # Any other options are passed to the +avatar_attachment+ association.
       #
       # Note: Active Storage relies on polymorphic associations, which in turn store class names in the database.
       # When renaming classes that use <tt>has_one_attached</tt>, make sure to also update the class names in the
       # <tt>active_storage_attachments.record_type</tt> polymorphic type column of
       # the corresponding rows.
-      def has_one_attached(name, dependent: :purge_later, service: nil, strict_loading: false, analyze: nil, **options)
+      def has_one_attached(name, dependent: :purge_later, service: nil, strict_loading: false, analyze: nil,
+        before_attach: nil, after_attach: nil, before_detach: nil, after_detach: nil, **options)
         Attached::Model.validate_service_configuration(service, self, name) unless service.is_a?(Proc)
 
         generated_association_methods.class_eval <<-CODE, __FILE__, __LINE__ + 1
@@ -164,7 +194,11 @@ module ActiveStorage
           :has_one_attached,
           name,
           nil,
-          { dependent: dependent, service_name: service, analyze: analyze },
+          {
+            dependent: dependent, service_name: service, analyze: analyze,
+            before_attach: before_attach, after_attach: after_attach,
+            before_detach: before_detach, after_detach: after_detach
+          },
           self
         )
         yield reflection if block_given?
@@ -228,13 +262,23 @@ module ActiveStorage
       #
       # See +has_one_attached+ for available values and details.
       #
+      # Pass callbacks to run when a file is attached to or detached from +photos+:
+      #
+      #   class Gallery < ApplicationRecord
+      #     has_many_attached :photos, after_attach: :generate_thumbnail
+      #   end
+      #
+      # Callbacks run once for each file. See +has_one_attached+ for the available
+      # callbacks and details.
+      #
       # Any other options are passed to the +photos_attachments+ association.
       #
       # Note: Active Storage relies on polymorphic associations, which in turn store class names in the database.
       # When renaming classes that use <tt>has_many</tt>, make sure to also update the class names in the
       # <tt>active_storage_attachments.record_type</tt> polymorphic type column of
       # the corresponding rows.
-      def has_many_attached(name, dependent: :purge_later, service: nil, strict_loading: false, analyze: nil, **options)
+      def has_many_attached(name, dependent: :purge_later, service: nil, strict_loading: false, analyze: nil,
+        before_attach: nil, after_attach: nil, before_detach: nil, after_detach: nil, **options)
         Attached::Model.validate_service_configuration(service, self, name) unless service.is_a?(Proc)
 
         generated_association_methods.class_eval <<-CODE, __FILE__, __LINE__ + 1
@@ -280,7 +324,11 @@ module ActiveStorage
           :has_many_attached,
           name,
           nil,
-          { dependent: dependent, service_name: service, analyze: analyze },
+          {
+            dependent: dependent, service_name: service, analyze: analyze,
+            before_attach: before_attach, after_attach: after_attach,
+            before_detach: before_detach, after_detach: after_detach
+          },
           self
         )
         yield reflection if block_given?
